@@ -90,7 +90,7 @@ class RfidBridge(messenger: BinaryMessenger) {
         // The official SDK documentation uses: BackReadOption BROption = new BackReadOption();
         val option = BackReadOption()
         option.IsFastRead = false
-        option.ReadDuration = 250
+        option.ReadDuration = 250.toShort()
         option.ReadInterval = 0
         option.TMFlags.IsAntennaID = true
         option.TMFlags.IsRSSI = true

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- فلتر لملحقات USB -->
+    <usb-accessory manufacturer="RFID" model="UHF" version="1.0" />
+    <usb-accessory manufacturer="Chainway" model="R6" version="1.0" />
+    <usb-accessory manufacturer="Zebra" model="RFID" version="1.0" />
+</resources>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- فلتر أجهزة USB المتوافقة مع قارئ RFID -->
+    
+    <!-- قارئ RFID العام - Vendor ID: 6790 (0x1A86), Product ID: 29987 (0x7523) -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    
+    <!-- قارئ FTDI -->
+    <usb-device vendor-id="1027" product-id="24577" />
+    
+    <!-- قارئ Silicon Labs -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    
+    <!-- قارئ UHF RFID -->
+    <usb-device vendor-id="1155" product-id="22336" />
+    <usb-device vendor-id="1155" product-id="22352" />
+    
+    <!-- قارئ Chainway -->
+    <usb-device vendor-id="6790" product-id="29988" />
+    
+    <!-- قارئ Zebra -->
+    <usb-device vendor-id="1062" product-id="10" />
+    
+    <!-- قارئ USB Serial عام -->
+    <usb-device vendor-id="0" product-id="0" />
+</resources>

@@ -1,6 +1,7 @@
 package com.example.alarm
 
 import android.util.Log
+import com.uhf.api.cls.BackReadOption
 import com.uhf.api.cls.ReadListener
 import com.uhf.api.cls.Reader
 import com.uhf.api.cls.Reader.READER_ERR
@@ -85,8 +86,9 @@ class RfidBridge(messenger: BinaryMessenger) {
 
         reader.addReadListener(readListener!!)
 
-        // Official SDK general asynchronous inventory: StartReading + BackReadOption + ReadListener.
-        val option = reader.BackReadOption()
+        // BackReadOption is a top-level SDK class in ModuleAPI_J.jar.
+        // The official SDK documentation uses: BackReadOption BROption = new BackReadOption();
+        val option = BackReadOption()
         option.IsFastRead = false
         option.ReadDuration = 250
         option.ReadInterval = 0

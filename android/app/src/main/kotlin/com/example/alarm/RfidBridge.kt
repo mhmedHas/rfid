@@ -122,7 +122,14 @@ class RfidBridge(messenger: BinaryMessenger) {
 
     private fun connectUsbReader(): Boolean {
         if (isConnected) return true
-        val candidates = listOf("", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyMT1", "/dev/ttyS1")
+        // "USB" is a literal token the vendor SDK recognizes: it enumerates
+        // attached USB devices, requests the Android USB permission itself,
+        // and picks the right one — confirmed working in the vendor's own
+        // demo app (uhfdemo) with this exact value in the address field.
+        if (connectReader("USB", 1)) return true
+        // Fallback only, in case a given module/firmware build doesn't
+        // support the "USB" auto-discovery token.
+        val candidates = listOf("/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyMT1", "/dev/ttyS1")
         for (address in candidates) if (connectReader(address, 1)) return true
         return false
     }

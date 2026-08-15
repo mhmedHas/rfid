@@ -34,6 +34,29 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val channel = MethodChannel(messenger, "com.example.alarm/usb")
 
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                ACTION_USB_PERMISSION -> {
+                    val device = getUsbDeviceExtra(intent)
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    channel.invokeMethod(
+                        "onUsbPermissionResult",
+                        mapOf("deviceId" to device?.deviceId, "granted" to granted)
+                    )
+                }
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    val device = getUsbDeviceExtra(intent) ?: return
+                    notifyDeviceStatus("attached", device)
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val device = getUsbDeviceExtra(intent) ?: return
+                    notifyDeviceStatus("detached", device)
+                }
+            }
+        }
+    }
+
     init {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -80,29 +103,6 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
             context, 0, Intent(ACTION_USB_PERMISSION), flags
         )
         usbManager.requestPermission(device, permissionIntent)
-    }
-
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                ACTION_USB_PERMISSION -> {
-                    val device = getUsbDeviceExtra(intent)
-                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                    channel.invokeMethod(
-                        "onUsbPermissionResult",
-                        mapOf("deviceId" to device?.deviceId, "granted" to granted)
-                    )
-                }
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    val device = getUsbDeviceExtra(intent) ?: return
-                    notifyDeviceStatus("attached", device)
-                }
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    val device = getUsbDeviceExtra(intent) ?: return
-                    notifyDeviceStatus("detached", device)
-                }
-            }
-        }
     }
 
     private fun notifyDeviceStatus(status: String, device: UsbDevice) {

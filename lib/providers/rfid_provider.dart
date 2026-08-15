@@ -16,7 +16,6 @@ class RfidProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _scannedTags = [];
   UsbDevice? _connectedDevice;
 
-  // Getters
   bool get isConnected => _isConnected;
   bool get isReading => _isReading;
   bool get isConnecting => _isConnecting;
@@ -33,66 +32,47 @@ class RfidProvider extends ChangeNotifier {
   }
 
   void _init() {
-    // الاستماع للعلامات
     RfidService.tagStream.listen(_handleRfidTags);
-
-    // بدء الاستماع لأحداث USB
     UsbService.startListening();
     UsbService.events.listen(_handleUsbEvent);
-
-    // فحص الأجهزة المتصلة عند بدء التطبيق
     _checkConnectedDevices();
   }
-
-  // ============ فحص الأجهزة المتصلة ============
 
   Future<void> _checkConnectedDevices() async {
     try {
       final devices = await UsbService.getConnectedDevices();
 
-      // البحث عن قارئ RFID
       for (var device in devices) {
-        if (device.isRfidReader) {
-          _connectedDevice = device;
+        if (!device.isRfidReader) continue;
 
-          // إذا كان لديه صلاحية، اتصل تلقائياً
-          if (device.hasPermission) {
-            await _autoConnectUsb();
-          } else {
-            // طلب صلاحية
-            await UsbService.requestPermission(device.deviceId);
-          }
-          break;
+        _connectedDevice = device;
+
+        if (device.hasPermission) {
+          await _autoConnectUsb();
+        } else {
+          await UsbService.requestPermission(device.deviceId);
         }
+        break;
       }
     } catch (e) {
       print('⚠️ Error checking connected devices: $e');
     }
   }
 
-  // ============ معالجة أحداث USB ============
-
   void _handleUsbEvent(UsbDeviceEvent event) {
     print('📱 USB Event: ${event.status}');
 
     switch (event.status) {
       case 'attached':
-        // جهاز USB متصل
         _handleDeviceAttached(event);
         break;
-
       case 'detached':
-        // جهاز USB مفصول
         _handleDeviceDetached(event);
         break;
-
       case 'connected':
-        // جهاز متصل بالفعل
         _handleDeviceConnected(event);
         break;
-
       case 'permission_result':
-        // نتيجة طلب الصلاحية
         if (event.granted == true) {
           _autoConnectUsb();
         } else {
@@ -109,7 +89,6 @@ class RfidProvider extends ChangeNotifier {
     _clearError();
     notifyListeners();
 
-    // محاولة الاتصال بالجهاز
     _connectedDevice = UsbDevice(
       deviceId: event.deviceId ?? 0,
       vendorId: event.vendorId ?? 0,
@@ -125,7 +104,6 @@ class RfidProvider extends ChangeNotifier {
     if (event.hasPermission) {
       _autoConnectUsb();
     } else {
-      // طلب صلاحية
       UsbService.requestPermission(event.deviceId ?? 0);
     }
   }
@@ -138,29 +116,27 @@ class RfidProvider extends ChangeNotifier {
   }
 
   void _handleDeviceConnected(UsbDeviceEvent event) {
-    if (!_isConnected) {
-      _connectedDevice = UsbDevice(
-        deviceId: event.deviceId ?? 0,
-        vendorId: event.vendorId ?? 0,
-        productId: event.productId ?? 0,
-        deviceName: event.deviceName ?? 'RFID Reader',
-        manufacturer: '',
-        product: '',
-        serial: '',
-        interfaceCount: 0,
-        hasPermission: event.hasPermission,
-      );
+    if (_isConnected) return;
 
-      if (event.hasPermission) {
-        _autoConnectUsb();
-      }
+    _connectedDevice = UsbDevice(
+      deviceId: event.deviceId ?? 0,
+      vendorId: event.vendorId ?? 0,
+      productId: event.productId ?? 0,
+      deviceName: event.deviceName ?? 'RFID Reader',
+      manufacturer: '',
+      product: '',
+      serial: '',
+      interfaceCount: 0,
+      hasPermission: event.hasPermission,
+    );
+
+    if (event.hasPermission) {
+      _autoConnectUsb();
     }
   }
 
-  // ============ الاتصال التلقائي عبر USB ============
-
   Future<void> _autoConnectUsb() async {
-    if (_isConnected) return;
+    if (_isConnected || _isAutoConnecting) return;
 
     _isAutoConnecting = true;
     _clearError();
@@ -172,7 +148,7 @@ class RfidProvider extends ChangeNotifier {
       if (success) {
         _isConnected = true;
         _isAutoConnecting = false;
-        _getDeviceInfo();
+        await _getDeviceInfo();
         notifyListeners();
         print('✅ تم الاتصال التلقائي بالقارئ عبر USB');
       } else {
@@ -187,8 +163,6 @@ class RfidProvider extends ChangeNotifier {
     }
   }
 
-  // ============ دوال الاتصال اليدوي (احتياطي) ============
-
   Future<bool> connectUSB() async {
     _setConnecting(true);
     _clearError();
@@ -196,7 +170,7 @@ class RfidProvider extends ChangeNotifier {
     try {
       _isConnected = await RfidService.connectUSB();
       if (_isConnected) {
-        _getDeviceInfo();
+        await _getDeviceInfo();
       }
       notifyListeners();
       return _isConnected;
@@ -215,7 +189,7 @@ class RfidProvider extends ChangeNotifier {
     try {
       _isConnected = await RfidService.connect(address, ports);
       if (_isConnected) {
-        _getDeviceInfo();
+        await _getDeviceInfo();
       }
       notifyListeners();
       return _isConnected;
@@ -241,21 +215,27 @@ class RfidProvider extends ChangeNotifier {
     }
   }
 
-  // ============ دوال القراءة ============
-
-  Future<void> startReading() async {
+  Future<bool> startReading() async {
     if (!_isConnected) {
       _setError('الجهاز غير متصل');
-      return;
+      return false;
     }
 
     try {
-      await RfidService.startReading();
-      _isReading = true;
-      _scannedTags.clear();
+      final success = await RfidService.startReading();
+      _isReading = success;
+      if (success) {
+        _scannedTags.clear();
+        _clearError();
+      } else {
+        _setError('فشل بدء القراءة من القارئ');
+      }
       notifyListeners();
+      return success;
     } catch (e) {
+      _isReading = false;
       _setError('فشل بدء القراءة: $e');
+      return false;
     }
   }
 
@@ -269,8 +249,6 @@ class RfidProvider extends ChangeNotifier {
     }
   }
 
-  // ============ معالجة العلامات ============
-
   void _handleRfidTags(List<dynamic> tags) {
     for (var tag in tags) {
       final epc = tag['epc']?.toString();
@@ -281,6 +259,9 @@ class RfidProvider extends ChangeNotifier {
         final tagData = {
           'epc': epc,
           'rssi': rssi,
+          'antenna': tag['antenna'],
+          'frequency': tag['frequency'],
+          'protocol': tag['protocol']?.toString() ?? '',
           'timestamp': DateTime.now().toIso8601String(),
           'tid': tag['tid']?.toString() ?? '',
           'readCount': tag['readCount'] ?? 0,
@@ -297,14 +278,12 @@ class RfidProvider extends ChangeNotifier {
     }
   }
 
-  // ============ معلومات الجهاز ============
-
   Future<void> _getDeviceInfo() async {
     try {
       final status = await RfidService.getStatus();
       _moduleInfo = status['module'] ?? 'UHF RFID Reader';
-      _firmwareVersion = status['firmware'] ?? 'v1.0.0';
-      _temperature = status['temperature'] ?? '25°C';
+      _firmwareVersion = status['firmware']?.toString();
+      _temperature = status['temperature']?.toString();
       notifyListeners();
     } catch (e) {
       print('⚠️ Error getting device info: $e');
@@ -318,8 +297,6 @@ class RfidProvider extends ChangeNotifier {
       _setError('فشل ضبط القوة: $e');
     }
   }
-
-  // ============ دوال مساعدة ============
 
   void _setConnecting(bool value) {
     _isConnecting = value;
@@ -341,7 +318,6 @@ class RfidProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // إعادة محاولة الاتصال التلقائي
   Future<void> retryAutoConnect() async {
     await _checkConnectedDevices();
   }

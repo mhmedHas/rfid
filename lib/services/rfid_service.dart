@@ -7,9 +7,7 @@ class RfidService {
   static bool _isConnected = false;
   static bool _isReading = false;
 
-  // ============ طرق الاتصال ============
-
-  // الاتصال عبر الشبكة (Ethernet/WiFi)
+  // الاتصال العام عبر SDK (للاستخدام الداخلي/الشبكة عند الحاجة).
   static Future<bool> connect(String address, int ports) async {
     try {
       final result = await _methods.invokeMethod('connect', {
@@ -20,11 +18,13 @@ class RfidService {
       return _isConnected;
     } catch (e) {
       print('❌ فشل الاتصال: $e');
+      _isConnected = false;
       return false;
     }
   }
 
-  // الاتصال عبر USB
+  // الاتصال الفعلي المستخدم في التطبيق: USB + Antenna 1.
+  // Android RfidBridge يرسل للـSDK القيمة "USB" كما في Demo الشركة.
   static Future<bool> connectUSB() async {
     try {
       final result = await _methods.invokeMethod('connectUSB');
@@ -32,11 +32,12 @@ class RfidService {
       return _isConnected;
     } catch (e) {
       print('❌ فشل الاتصال عبر USB: $e');
+      _isConnected = false;
       return false;
     }
   }
 
-  // الاتصال عبر البلوتوث
+  // البلوتوث غير مستخدم في هذا التطبيق.
   static Future<bool> connectBluetooth(String address) async {
     try {
       final result = await _methods.invokeMethod('connectBluetooth', {
@@ -45,45 +46,49 @@ class RfidService {
       _isConnected = result == true;
       return _isConnected;
     } catch (e) {
-      print('❌ فشل الاتصال عبر البلوتوث: $e');
+      print('❌ البلوتوث غير مستخدم: $e');
+      _isConnected = false;
       return false;
     }
   }
 
-  // فصل الاتصال
   static Future<void> disconnect() async {
     try {
       await _methods.invokeMethod('disconnect');
-      _isConnected = false;
-      _isReading = false;
     } catch (e) {
       print('❌ فشل قطع الاتصال: $e');
+    } finally {
+      _isConnected = false;
+      _isReading = false;
     }
   }
 
-  // ============ عمليات القراءة ============
-
-  // بدء القراءة
-  static Future<void> startReading() async {
+  // يبدأ Inventory غير متزامن ويعيد نجاح العملية لكي تستطيع الشاشة
+  // منع إظهار "متصل" إذا فشل StartReading.
+  static Future<bool> startReading() async {
     try {
-      await _methods.invokeMethod('startReading');
-      _isReading = true;
+      final result = await _methods.invokeMethod('startReading');
+      _isReading = result == true;
+      return _isReading;
     } catch (e) {
       print('❌ فشل بدء القراءة: $e');
+      _isReading = false;
+      return false;
     }
   }
 
-  // إيقاف القراءة
-  static Future<void> stopReading() async {
+  static Future<bool> stopReading() async {
     try {
-      await _methods.invokeMethod('stopReading');
+      final result = await _methods.invokeMethod('stopReading');
       _isReading = false;
+      return result == true;
     } catch (e) {
       print('❌ فشل إيقاف القراءة: $e');
+      _isReading = false;
+      return false;
     }
   }
 
-  // جولة مخزون كاملة
   static Future<List<Map<String, dynamic>>> inventory() async {
     try {
       final result = await _methods.invokeMethod('inventory');
@@ -94,9 +99,6 @@ class RfidService {
     }
   }
 
-  // ============ الإعدادات ============
-
-  // ضبط قوة القراءة
   static Future<bool> setPower(int power) async {
     try {
       final result = await _methods.invokeMethod('setPower', {'power': power});
@@ -107,7 +109,6 @@ class RfidService {
     }
   }
 
-  // جلب حالة الجهاز
   static Future<Map<String, dynamic>> getStatus() async {
     try {
       final result = await _methods.invokeMethod('getStatus');
@@ -118,7 +119,6 @@ class RfidService {
     }
   }
 
-  // جلب معلومات القارئ
   static Future<Map<String, dynamic>> getReaderInfo() async {
     try {
       final result = await _methods.invokeMethod('getReaderInfo');
@@ -129,13 +129,9 @@ class RfidService {
     }
   }
 
-  // ============ Stream للعلامات ============
-
   static Stream<List<dynamic>> get tagStream {
     return _tags.receiveBroadcastStream().cast<List<dynamic>>();
   }
-
-  // ============ Getters ============
 
   static bool get isConnected => _isConnected;
   static bool get isReading => _isReading;

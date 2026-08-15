@@ -162,11 +162,11 @@ class RfidBridge(messenger: BinaryMessenger) {
     /** ModuleAPI_J power API: MTR_PARAM_RF_ANTPOWER / AntPowerConf. */
     private fun setReaderPower(power: Int): Boolean {
         return try {
-            val powerConf = reader.new AntPowerConf()
+            val powerConf = reader.AntPowerConf()
             val getErr = reader.ParamGet(Mtr_Param.MTR_PARAM_RF_ANTPOWER, powerConf)
             if (getErr != READER_ERR.MT_OK_ERR) return false
 
-            val antennaPower = reader.new AntPower()
+            val antennaPower = reader.AntPower()
             antennaPower.antid = 1
             antennaPower.readPower = power.toShort()
             antennaPower.writePower = power.toShort()

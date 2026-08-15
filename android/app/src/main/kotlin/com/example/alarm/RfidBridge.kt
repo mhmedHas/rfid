@@ -1,10 +1,8 @@
 package com.example.alarm
 
 import android.util.Log
-import com.uhf.api.cls.BackReadOption
-import com.uhf.api.cls.ReadListener
 import com.uhf.api.cls.Reader
-import com.uhf.api.cls.Reader.READER_ERR
+import com.uhf.api.cls.Reader.*
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -12,9 +10,12 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Flutter bridge for the vendor ModuleAPI_J SDK.
  *
- * Connection is intentionally kept identical to the vendor Android demo:
- * Address = "USB", antenna ports = 1.
- * No ttyUSB/ttyACM guessing is used here.
+ * The vendor documentation explicitly puts the public SDK classes in
+ * com.uhf.api.cls.Reader.*. BackReadOption and ReadListener are therefore
+ * imported from Reader.*, not as top-level classes.
+ *
+ * USB connection follows the vendor demo configuration shown on the device:
+ * address = "USB", antenna port = 1.
  */
 class RfidBridge(messenger: BinaryMessenger) {
     companion object {
@@ -106,8 +107,11 @@ class RfidBridge(messenger: BinaryMessenger) {
     }
 
     /**
-     * Exact connection used by the vendor's General Reader demo for the
-     * configuration shown on the user's device: Address=USB, Antenna=1.
+     * Exact connection requested by the vendor-demo configuration:
+     * Address=USB, Antenna=1.
+     *
+     * Android USB permission is handled separately by UsbBridge before this
+     * method is reached. The ModuleAPI_J SDK then owns the reader transport.
      */
     private fun connectUsbReader(): Boolean {
         if (isConnected) return true
@@ -118,12 +122,14 @@ class RfidBridge(messenger: BinaryMessenger) {
         if (isConnected) return true
 
         return try {
-            // Vendor SDK lifecycle: InitReader_Notype -> configure -> inventory.
-            val err = reader.InitReader_Notype(address, ports)
+            val safePorts = ports.coerceIn(1, 16)
+
+            // ModuleAPI_J documented connection lifecycle.
+            val err = reader.InitReader_Notype(address, safePorts)
             if (err == READER_ERR.MT_OK_ERR) {
                 isConnected = true
                 connectedAddress = address
-                Log.i(TAG, "RFID connected: address=$address, antennaPorts=$ports")
+                Log.i(TAG, "RFID connected: address=$address, antennaPorts=$safePorts")
                 true
             } else {
                 Log.e(TAG, "RFID connection failed: address=$address, error=$err")
@@ -177,8 +183,8 @@ class RfidBridge(messenger: BinaryMessenger) {
 
             reader.addReadListener(readListener!!)
 
-            // Same asynchronous inventory API and settings used by the
-            // vendor's Android demo: one antenna, 250 ms duration, 0 interval.
+            // This is the asynchronous inventory API documented by the SDK.
+            // General mode, 250 ms duration, zero interval, one antenna.
             val option = BackReadOption()
             option.IsFastRead = false
             option.ReadDuration = 250.toShort()
@@ -269,7 +275,7 @@ class RfidBridge(messenger: BinaryMessenger) {
 
             conf.Powers[0] = antPower
             reader.ParamSet(
-                Reader.Mtr_Param.MTR_PARAM_RF_ANTPOWER,
+                Mtr_Param.MTR_PARAM_RF_ANTPOWER,
                 conf
             ) == READER_ERR.MT_OK_ERR
         } catch (e: Throwable) {

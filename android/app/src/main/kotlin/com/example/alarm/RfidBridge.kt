@@ -2,7 +2,6 @@ package com.example.alarm
 
 import android.util.Log
 import com.uhf.api.cls.Reader
-import com.uhf.api.cls.Reader.*
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -17,7 +16,7 @@ class RfidBridge(messenger: BinaryMessenger) {
 
     private val reader = Reader()
     private var eventSink: EventChannel.EventSink? = null
-    private var readListener: ReadListener? = null
+    private var readListener: Reader.ReadListener? = null
     private var isReading = false
     private var isConnected = false
     private var connectedAddress = ""
@@ -59,7 +58,7 @@ class RfidBridge(messenger: BinaryMessenger) {
             if (isConnected) return true
             val err = reader.InitReader_Notype(address, ports)
             Log.i(TAG, "InitReader_Notype($address, $ports) => $err")
-            if (err == READER_ERR.MT_OK_ERR) {
+            if (err == Reader.READER_ERR.MT_OK_ERR) {
                 connectedAddress = address
                 isConnected = true
                 true
@@ -84,11 +83,11 @@ class RfidBridge(messenger: BinaryMessenger) {
         if (isReading) { result.success(true); return }
 
         try {
-            val listener = object : ReadListener {
-                override fun tagRead(tags: Array<TAGINFO>?) {
-                    if (tags == null) return
+            val listener = object : Reader.ReadListener {
+                override fun tagRead(r: Reader, tags: Array<Reader.TAGINFO>) {
                     for (tag in tags) {
-                        val epc = Reader.bytes_Hexstr(tag.EpcId ?: continue)
+                        val epcBytes = tag.EpcId ?: continue
+                        val epc = Reader.bytes_Hexstr(epcBytes)
                         if (epc.isBlank()) continue
                         eventSink?.success(mapOf(
                             "type" to "tag",
@@ -101,16 +100,12 @@ class RfidBridge(messenger: BinaryMessenger) {
                         ))
                     }
                 }
-
-                override fun tagException(errorCode: READER_ERR?) {
-                    eventSink?.error("RFID_READ_ERROR", errorCode?.toString() ?: "Unknown RFID read error", null)
-                }
             }
 
             readListener = listener
             reader.addReadListener(listener)
 
-            val option = BackReadOption()
+            val option = Reader.BackReadOption()
             option.IsFastRead = false
             option.ReadDuration = 250
             option.ReadInterval = 0
@@ -119,7 +114,7 @@ class RfidBridge(messenger: BinaryMessenger) {
             val err = reader.StartReading(antennas, antennas.size, option)
             Log.i(TAG, "StartReading => $err")
 
-            if (err == READER_ERR.MT_OK_ERR) {
+            if (err == Reader.READER_ERR.MT_OK_ERR) {
                 isReading = true
                 result.success(true)
             } else {
@@ -141,7 +136,7 @@ class RfidBridge(messenger: BinaryMessenger) {
         }
         isReading = false
 
-        val listener: ReadListener? = readListener
+        val listener: Reader.ReadListener? = readListener
         if (listener != null) {
             try { reader.removeReadListener(listener) } catch (_: Throwable) { }
         }
@@ -163,8 +158,8 @@ class RfidBridge(messenger: BinaryMessenger) {
     private fun setReaderPower(power: Int): Boolean {
         return try {
             val powerConf = reader.AntPowerConf()
-            val getErr = reader.ParamGet(Mtr_Param.MTR_PARAM_RF_ANTPOWER, powerConf)
-            if (getErr != READER_ERR.MT_OK_ERR) return false
+            val getErr = reader.ParamGet(Reader.Mtr_Param.MTR_PARAM_RF_ANTPOWER, powerConf)
+            if (getErr != Reader.READER_ERR.MT_OK_ERR) return false
 
             val antennaPower = reader.AntPower()
             antennaPower.antid = 1
@@ -173,7 +168,7 @@ class RfidBridge(messenger: BinaryMessenger) {
             powerConf.antcnt = 1
             powerConf.Powers[0] = antennaPower
 
-            reader.ParamSet(Mtr_Param.MTR_PARAM_RF_ANTPOWER, powerConf) == READER_ERR.MT_OK_ERR
+            reader.ParamSet(Reader.Mtr_Param.MTR_PARAM_RF_ANTPOWER, powerConf) == Reader.READER_ERR.MT_OK_ERR
         } catch (e: Throwable) {
             Log.e(TAG, "Set power failed", e)
             false

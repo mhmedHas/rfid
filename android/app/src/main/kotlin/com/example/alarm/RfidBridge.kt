@@ -1,6 +1,8 @@
 package com.example.alarm
 
 import android.util.Log
+import com.uhf.api.cls.BackReadOption
+import com.uhf.api.cls.ReadListener
 import com.uhf.api.cls.Reader
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -16,7 +18,7 @@ class RfidBridge(messenger: BinaryMessenger) {
 
     private val reader = Reader()
     private var eventSink: EventChannel.EventSink? = null
-    private var readListener: Reader.ReadListener? = null
+    private var readListener: ReadListener? = null
     private var isReading = false
     private var isConnected = false
     private var connectedAddress = ""
@@ -83,7 +85,7 @@ class RfidBridge(messenger: BinaryMessenger) {
         if (isReading) { result.success(true); return }
 
         try {
-            val listener = object : Reader.ReadListener {
+            val listener = object : ReadListener {
                 override fun tagRead(r: Reader, tags: Array<Reader.TAGINFO>) {
                     for (tag in tags) {
                         val epcBytes = tag.EpcId ?: continue
@@ -105,7 +107,7 @@ class RfidBridge(messenger: BinaryMessenger) {
             readListener = listener
             reader.addReadListener(listener)
 
-            val option = Reader.BackReadOption()
+            val option = BackReadOption()
             option.IsFastRead = false
             option.ReadDuration = 250
             option.ReadInterval = 0
@@ -136,7 +138,7 @@ class RfidBridge(messenger: BinaryMessenger) {
         }
         isReading = false
 
-        val listener: Reader.ReadListener? = readListener
+        val listener = readListener
         if (listener != null) {
             try { reader.removeReadListener(listener) } catch (_: Throwable) { }
         }

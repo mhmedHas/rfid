@@ -30,6 +30,7 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val channel = MethodChannel(messenger, "com.example.alarm/usb")
+    private var pendingPermissionDeviceId: Int? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -40,6 +41,7 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
                         UsbManager.EXTRA_PERMISSION_GRANTED,
                         false
                     )
+                    pendingPermissionDeviceId = null
 
                     Log.i(
                         TAG,
@@ -70,16 +72,16 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
                     Log.i(TAG, "USB attached: ${describe(device)}")
                     notifyDeviceStatus("attached", device)
 
-                    // If Android did not grant permission automatically through
-                    // the USB attach intent, explicitly show the same system
-                    // permission dialog used by the vendor demo.
                     if (!usbManager.hasPermission(device)) {
                         requestPermission(device)
+                    } else {
+                        notifyDeviceStatus("permission_granted", device)
                     }
                 }
 
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val device = getUsbDeviceExtra(intent) ?: return
+                    pendingPermissionDeviceId = null
                     Log.i(TAG, "USB detached: ${describe(device)}")
                     notifyDeviceStatus("detached", device)
                 }
@@ -91,10 +93,7 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "getUsbDevices" -> {
-                    result.success(
-                        usbManager.deviceList.values
-                            .map { it.toMap() }
-                    )
+                    result.success(usbManager.deviceList.values.map { it.toMap() })
                 }
 
                 "requestPermission" -> {
@@ -105,6 +104,7 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
                     if (device == null) {
                         result.success(false)
                     } else if (usbManager.hasPermission(device)) {
+                        pendingPermissionDeviceId = null
                         notifyDeviceStatus("permission_granted", device)
                         result.success(true)
                     } else {
@@ -158,7 +158,15 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
 
     private fun requestPermission(device: UsbDevice) {
         if (usbManager.hasPermission(device)) {
+            pendingPermissionDeviceId = null
             notifyDeviceStatus("permission_granted", device)
+            return
+        }
+
+        // Prevent the attach broadcast and MainActivity's initial intent from
+        // opening two permission dialogs for the same physical USB device.
+        if (pendingPermissionDeviceId == device.deviceId) {
+            Log.d(TAG, "USB permission request already pending for ${device.deviceId}")
             return
         }
 
@@ -175,6 +183,7 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
             flags
         )
 
+        pendingPermissionDeviceId = device.deviceId
         Log.i(TAG, "Requesting USB permission for ${describe(device)}")
         usbManager.requestPermission(device, permissionIntent)
     }

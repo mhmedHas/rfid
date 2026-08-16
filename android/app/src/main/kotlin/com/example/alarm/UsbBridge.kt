@@ -13,21 +13,18 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Native implementation of the 'com.example.alarm/usb' channel.
+ * Real Android USB permission/attach bridge used by the Flutter RFID app.
  *
- * This channel previously had NO handler registered anywhere in the native
- * code — Dart's UsbService (services/connect.dart) called `getUsbDevices`
- * and `requestPermission` on it, but every call silently threw
- * MissingPluginException and was swallowed by its own try/catch, so
- * RfidProvider's "auto-connect when a reader is plugged in" flow never
- * actually ran. This class wires it up for real using Android's UsbManager.
- *
- * Known vendor IDs kept in sync with android/app/src/main/res/xml/device_filter.xml
+ * The vendor demo relies on Android USB Host permission before the ModuleAPI_J
+ * native reader is opened. This class handles the same permission lifecycle:
+ * attached -> requestPermission() -> permission result -> Flutter -> SDK connect.
  */
 class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
     companion object {
         private const val TAG = "UsbBridge"
         private const val ACTION_USB_PERMISSION = "com.example.alarm.USB_PERMISSION"
+        private const val REQUEST_CODE_USB_PERMISSION = 4127
+
         private val KNOWN_RFID_VENDOR_IDS = setOf(6790, 1027, 4292, 1155, 1062)
     }
 
@@ -39,18 +36,51 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
             when (intent.action) {
                 ACTION_USB_PERMISSION -> {
                     val device = getUsbDeviceExtra(intent)
-                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    val granted = intent.getBooleanExtra(
+                        UsbManager.EXTRA_PERMISSION_GRANTED,
+                        false
+                    )
+
+                    Log.i(
+                        TAG,
+                        "USB permission result: granted=$granted device=${device?.deviceName}"
+                    )
+
                     channel.invokeMethod(
                         "onUsbPermissionResult",
-                        mapOf("deviceId" to device?.deviceId, "granted" to granted)
+                        mapOf(
+                            "deviceId" to device?.deviceId,
+                            "vendorId" to device?.vendorId,
+                            "productId" to device?.productId,
+                            "deviceName" to device?.deviceName,
+                            "granted" to granted
+                        )
                     )
+
+                    if (device != null) {
+                        notifyDeviceStatus(
+                            if (granted) "permission_granted" else "permission_denied",
+                            device
+                        )
+                    }
                 }
+
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     val device = getUsbDeviceExtra(intent) ?: return
+                    Log.i(TAG, "USB attached: ${describe(device)}")
                     notifyDeviceStatus("attached", device)
+
+                    // If Android did not grant permission automatically through
+                    // the USB attach intent, explicitly show the same system
+                    // permission dialog used by the vendor demo.
+                    if (!usbManager.hasPermission(device)) {
+                        requestPermission(device)
+                    }
                 }
+
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val device = getUsbDeviceExtra(intent) ?: return
+                    Log.i(TAG, "USB detached: ${describe(device)}")
                     notifyDeviceStatus("detached", device)
                 }
             }
@@ -60,17 +90,36 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
     init {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
-                "getUsbDevices" -> result.success(usbManager.deviceList.values.map { it.toMap() })
+                "getUsbDevices" -> {
+                    result.success(
+                        usbManager.deviceList.values
+                            .map { it.toMap() }
+                    )
+                }
+
                 "requestPermission" -> {
                     val deviceId = call.argument<Int>("deviceId")
-                    val device = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId }
+                    val device = usbManager.deviceList.values
+                        .firstOrNull { it.deviceId == deviceId }
+
                     if (device == null) {
                         result.success(false)
+                    } else if (usbManager.hasPermission(device)) {
+                        notifyDeviceStatus("permission_granted", device)
+                        result.success(true)
                     } else {
                         requestPermission(device)
                         result.success(true)
                     }
                 }
+
+                "hasPermission" -> {
+                    val deviceId = call.argument<Int>("deviceId")
+                    val device = usbManager.deviceList.values
+                        .firstOrNull { it.deviceId == deviceId }
+                    result.success(device != null && usbManager.hasPermission(device))
+                }
+
                 else -> result.notImplemented()
             }
         }
@@ -80,33 +129,57 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
+            @Suppress("DEPRECATION")
             context.registerReceiver(receiver, filter)
         }
     }
 
-    /** Call from MainActivity.onCreate/onNewIntent so an attach that launched the app is reported too. */
+    /**
+     * Called by MainActivity when Android launches the app because the reader
+     * was attached while the app was not running.
+     */
     fun handleIntent(intent: Intent?) {
-        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            val device = getUsbDeviceExtra(intent) ?: return
-            // If the OS routed this intent to us via device_filter.xml, permission
-            // is granted automatically — no need to call requestPermission again.
-            notifyDeviceStatus("attached", device)
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+
+        val device = getUsbDeviceExtra(intent) ?: return
+        Log.i(TAG, "USB attach intent received: ${describe(device)}")
+        notifyDeviceStatus("attached", device)
+
+        if (!usbManager.hasPermission(device)) {
+            requestPermission(device)
+        } else {
+            notifyDeviceStatus("permission_granted", device)
         }
     }
 
     private fun requestPermission(device: UsbDevice) {
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        if (usbManager.hasPermission(device)) {
+            notifyDeviceStatus("permission_granted", device)
+            return
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+
         val permissionIntent = PendingIntent.getBroadcast(
-            context, 0, Intent(ACTION_USB_PERMISSION), flags
+            context,
+            REQUEST_CODE_USB_PERMISSION,
+            Intent(ACTION_USB_PERMISSION).setPackage(context.packageName),
+            flags
         )
+
+        Log.i(TAG, "Requesting USB permission for ${describe(device)}")
         usbManager.requestPermission(device, permissionIntent)
     }
 
     private fun notifyDeviceStatus(status: String, device: UsbDevice) {
-        Log.d(TAG, "USB $status: ${device.deviceName} (vid=${device.vendorId}, pid=${device.productId})")
         channel.invokeMethod(
             "onUsbDeviceStatus",
             mapOf(
@@ -115,6 +188,9 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
                 "vendorId" to device.vendorId,
                 "productId" to device.productId,
                 "deviceName" to device.deviceName,
+                "manufacturer" to (device.manufacturerName ?: ""),
+                "product" to (device.productName ?: ""),
+                "interfaceCount" to device.interfaceCount,
                 "hasPermission" to usbManager.hasPermission(device)
             )
         )
@@ -136,12 +212,20 @@ class UsbBridge(private val context: Context, messenger: BinaryMessenger) {
         "deviceName" to deviceName,
         "manufacturer" to (manufacturerName ?: ""),
         "product" to (productName ?: ""),
-        "serial" to (try { serialNumber } catch (e: SecurityException) { null } ?: ""),
+        "serial" to (try { serialNumber } catch (_: SecurityException) { null } ?: ""),
         "interfaceCount" to interfaceCount,
-        "hasPermission" to usbManager.hasPermission(this)
+        "hasPermission" to usbManager.hasPermission(this),
+        "isKnownRfidVendor" to KNOWN_RFID_VENDOR_IDS.contains(vendorId)
     )
 
+    private fun describe(device: UsbDevice): String =
+        "${device.deviceName} vid=${device.vendorId} pid=${device.productId} interfaces=${device.interfaceCount}"
+
     fun dispose() {
-        try { context.unregisterReceiver(receiver) } catch (e: Exception) { Log.e(TAG, "unregisterReceiver failed", e) }
+        try {
+            context.unregisterReceiver(receiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "unregisterReceiver failed", e)
+        }
     }
 }

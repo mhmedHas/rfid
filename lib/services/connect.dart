@@ -10,10 +10,8 @@ class UsbService {
 
   static bool _isListening = false;
 
-  // Stream للأحداث
   static Stream<UsbDeviceEvent> get events => _eventController.stream;
 
-  // بدء الاستماع لأحداث USB
   static void startListening() {
     if (_isListening) return;
     _isListening = true;
@@ -21,39 +19,51 @@ class UsbService {
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'onUsbDeviceStatus':
-          final args = call.arguments as Map<dynamic, dynamic>;
-          final event = UsbDeviceEvent(
-            status: args['status'] as String,
-            deviceId: args['deviceId'] as int?,
-            vendorId: args['vendorId'] as int?,
-            productId: args['productId'] as int?,
-            deviceName: args['deviceName'] as String?,
-            hasPermission: args['hasPermission'] as bool? ?? false,
+          final args = Map<dynamic, dynamic>.from(
+            call.arguments as Map<dynamic, dynamic>,
           );
-          _eventController.add(event);
+          _eventController.add(
+            UsbDeviceEvent(
+              status: args['status'] as String? ?? 'unknown',
+              deviceId: args['deviceId'] as int?,
+              vendorId: args['vendorId'] as int?,
+              productId: args['productId'] as int?,
+              deviceName: args['deviceName'] as String?,
+              manufacturer: args['manufacturer'] as String?,
+              product: args['product'] as String?,
+              hasPermission: args['hasPermission'] as bool? ?? false,
+            ),
+          );
           break;
 
         case 'onUsbPermissionResult':
-          final args = call.arguments as Map<dynamic, dynamic>;
-          final event = UsbDeviceEvent(
-            status: 'permission_result',
-            deviceId: args['deviceId'] as int?,
-            granted: args['granted'] as bool? ?? false,
+          final args = Map<dynamic, dynamic>.from(
+            call.arguments as Map<dynamic, dynamic>,
           );
-          _eventController.add(event);
+          _eventController.add(
+            UsbDeviceEvent(
+              status: 'permission_result',
+              deviceId: args['deviceId'] as int?,
+              vendorId: args['vendorId'] as int?,
+              productId: args['productId'] as int?,
+              deviceName: args['deviceName'] as String?,
+              granted: args['granted'] as bool? ?? false,
+              hasPermission: args['granted'] as bool? ?? false,
+            ),
+          );
           break;
       }
       return null;
     });
   }
 
-  // جلب قائمة أجهزة USB المتصلة
   static Future<List<UsbDevice>> getConnectedDevices() async {
     try {
       final result = await _channel.invokeMethod('getUsbDevices');
-      final List<dynamic> devices = result as List<dynamic>? ?? [];
+      final devices = result is List ? result : const <dynamic>[];
       return devices
-          .map((d) => UsbDevice.fromMap(d as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map(UsbDevice.fromMap)
           .toList();
     } catch (e) {
       print('❌ Error getting USB devices: $e');
@@ -61,35 +71,50 @@ class UsbService {
     }
   }
 
-  // طلب صلاحية الوصول لجهاز USB
   static Future<void> requestPermission(int deviceId) async {
     try {
-      await _channel.invokeMethod('requestPermission', {'deviceId': deviceId});
+      await _channel.invokeMethod(
+        'requestPermission',
+        {'deviceId': deviceId},
+      );
     } catch (e) {
       print('❌ Error requesting USB permission: $e');
     }
   }
 
-  // إيقاف الاستماع
+  static Future<bool> hasPermission(int deviceId) async {
+    try {
+      final result = await _channel.invokeMethod(
+        'hasPermission',
+        {'deviceId': deviceId},
+      );
+      return result == true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   static void stopListening() {
     _isListening = false;
     _channel.setMethodCallHandler(null);
   }
 
-  // تنظيف
   static void dispose() {
     stopListening();
-    _eventController.close();
+    if (!_eventController.isClosed) {
+      _eventController.close();
+    }
   }
 }
 
-// نموذج حدث USB
 class UsbDeviceEvent {
   final String status;
   final int? deviceId;
   final int? vendorId;
   final int? productId;
   final String? deviceName;
+  final String? manufacturer;
+  final String? product;
   final bool hasPermission;
   final bool granted;
 
@@ -99,12 +124,13 @@ class UsbDeviceEvent {
     this.vendorId,
     this.productId,
     this.deviceName,
+    this.manufacturer,
+    this.product,
     this.hasPermission = false,
     this.granted = false,
   });
 }
 
-// نموذج جهاز USB
 class UsbDevice {
   final int deviceId;
   final int vendorId;
@@ -115,6 +141,7 @@ class UsbDevice {
   final String serial;
   final int interfaceCount;
   final bool hasPermission;
+  final bool isKnownRfidVendor;
 
   UsbDevice({
     required this.deviceId,
@@ -126,6 +153,7 @@ class UsbDevice {
     required this.serial,
     required this.interfaceCount,
     required this.hasPermission,
+    this.isKnownRfidVendor = false,
   });
 
   factory UsbDevice.fromMap(Map<dynamic, dynamic> map) {
@@ -139,12 +167,35 @@ class UsbDevice {
       serial: map['serial'] as String? ?? '',
       interfaceCount: map['interfaceCount'] as int? ?? 0,
       hasPermission: map['hasPermission'] as bool? ?? false,
+      isKnownRfidVendor: map['isKnownRfidVendor'] as bool? ?? false,
     );
   }
 
+  ///
+  /// The supplied UHF_Demo shows the reader as:
+  /// "Composite Device HID&KBD".
+  ///
+  /// Some of these readers do not expose a vendor ID from the Android USB
+  /// layer that is in our old hard-coded list. Therefore we also recognize
+  /// the reader by its USB product/device description.
+  ///
   bool get isRfidReader {
-    // قائمة Vendor IDs المعروفة لقارئات RFID
     const rfidVendors = [6790, 1027, 4292, 1155, 1062];
-    return rfidVendors.contains(vendorId);
+    if (isKnownRfidVendor || rfidVendors.contains(vendorId)) {
+      return true;
+    }
+
+    final identity = '$deviceName $manufacturer $product'.toLowerCase();
+    const keywords = [
+      'uhf',
+      'rfid',
+      'hid&kbd',
+      'hid & kbd',
+      'composite device',
+      'uhf reader',
+      'rfid reader',
+    ];
+
+    return keywords.any(identity.contains);
   }
 }
